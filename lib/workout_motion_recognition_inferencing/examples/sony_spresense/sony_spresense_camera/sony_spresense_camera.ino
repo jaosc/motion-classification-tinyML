@@ -44,7 +44,7 @@ typedef struct {
  *
  * @return     Returns number of available bytes
  */
-int ei_get_serial_available(void) 
+int ei_get_serial_available(void)
 {
     return Serial.available();
 }
@@ -54,7 +54,7 @@ int ei_get_serial_available(void)
  *
  * @return     byte
  */
-char ei_get_serial_byte(void) 
+char ei_get_serial_byte(void)
 {
     return Serial.read();
 }
@@ -82,7 +82,7 @@ void setup()
 {
     // put your setup code here, to run once:
     Serial.begin(115200);
-    
+
     // comment out the below line to cancel the wait for USB connection (needed for native USB)
     while (!Serial);
     Serial.println("Edge Impulse Inferencing Demo");
@@ -132,32 +132,50 @@ void loop()
     ei_printf("Predictions (DSP: %d ms., Classification: %d ms., Anomaly: %d ms.): \n",
                 result.timing.dsp, result.timing.classification, result.timing.anomaly);
 #if EI_CLASSIFIER_OBJECT_DETECTION == 1
-    bool bb_found = result.bounding_boxes[0].value > 0;
-    for (size_t ix = 0; ix < result.bounding_boxes_count; ix++) {
-        auto bb = result.bounding_boxes[ix];
+    ei_printf("Object detection bounding boxes:\r\n");
+    for (uint32_t i = 0; i < result.bounding_boxes_count; i++) {
+        ei_impulse_result_bounding_box_t bb = result.bounding_boxes[i];
         if (bb.value == 0) {
             continue;
         }
-
-        ei_printf("    %s (", bb.label);
-        ei_printf_float(bb.value);
-        ei_printf(") [ x: %u, y: %u, width: %u, height: %u ]\n", bb.x, bb.y, bb.width, bb.height);
+        ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
+                bb.label,
+                bb.value,
+                bb.x,
+                bb.y,
+                bb.width,
+                bb.height);
     }
 
-    if (!bb_found) {
-        ei_printf("    No objects found\n");
-    }
+    // Print the prediction results (classification)
 #else
-    for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
-        ei_printf("    %s: ", result.classification[ix].label);
-        ei_printf_float(result.classification[ix].value);
-        ei_printf("\n");
+    ei_printf("Predictions:\r\n");
+    for (uint16_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+        ei_printf("  %s: ", ei_classifier_inferencing_categories[i]);
+        ei_printf("%.5f\r\n", result.classification[i].value);
     }
-#if EI_CLASSIFIER_HAS_ANOMALY == 1
-    ei_printf("    anomaly score: ");
-    ei_printf_float(result.anomaly);
-    ei_printf("\n");
 #endif
+
+    // Print anomaly result (if it exists)
+#if EI_CLASSIFIER_HAS_ANOMALY
+    ei_printf("Anomaly prediction: %.3f\r\n", result.anomaly);
+#endif
+
+#if EI_CLASSIFIER_HAS_VISUAL_ANOMALY
+    ei_printf("Visual anomalies:\r\n");
+    for (uint32_t i = 0; i < result.visual_ad_count; i++) {
+        ei_impulse_result_bounding_box_t bb = result.visual_ad_grid_cells[i];
+        if (bb.value == 0) {
+            continue;
+        }
+        ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
+                bb.label,
+                bb.value,
+                bb.x,
+                bb.y,
+                bb.width,
+                bb.height);
+    }
 #endif
 }
 
@@ -166,12 +184,12 @@ void loop()
  *
  * @retval  false if initialisation failed
  */
-bool ei_camera_init(void) 
+bool ei_camera_init(void)
 {
     CamErr err;
     if (is_initialised) {
-        return true;  
-    }    
+        return true;
+    }
 
     Serial.println("Prepare camera");
     err = theCamera.begin();
@@ -222,7 +240,7 @@ bool ei_camera_init(void)
 /**
  * @brief      Stop streaming of sensor data
  */
-void ei_camera_deinit(void) 
+void ei_camera_deinit(void)
 {
     ei_free(ei_camera_capture_out);
     ei_camera_capture_out = nullptr;
@@ -253,14 +271,14 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
     CamImage img = theCamera.takePicture();
 
     if (img.isAvailable() != true) {
-        ei_printf("ERR: Failed to get snapshot\r\n");        
+        ei_printf("ERR: Failed to get snapshot\r\n");
         return false;
     }
 
 
     // we take snapshot in yuv422
     if (ei::EIDSP_OK != ei::image::processing::yuv422_to_rgb888(ei_camera_capture_out, img.getImgBuff(), img.getImgSize(), ei::image::processing::BIG_ENDIAN_ORDER)) {
-        ei_printf("ERR: Conversion failed\n");                
+        ei_printf("ERR: Conversion failed\n");
         return false;
     }
 
@@ -269,7 +287,7 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
     // choose resize dimensions
     int res = calculate_resize_dimensions(img_width, img_height, &resize_col_sz, &resize_row_sz, &do_resize);
     if (res) {
-        ei_printf("ERR: Failed to calculate resize dimensions (%d)\r\n", res);        
+        ei_printf("ERR: Failed to calculate resize dimensions (%d)\r\n", res);
         return false;
     }
 
@@ -278,7 +296,7 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
         do_crop = true;
     }
 
-    if (do_resize) {          
+    if (do_resize) {
           ei::image::processing::crop_and_interpolate_rgb888(
           ei_camera_capture_out,
           EI_CAMERA_RAW_FRAME_BUFFER_COLS,
@@ -287,7 +305,7 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
           resize_col_sz,
           resize_row_sz);
     }
-    
+
     return true;
 }
 

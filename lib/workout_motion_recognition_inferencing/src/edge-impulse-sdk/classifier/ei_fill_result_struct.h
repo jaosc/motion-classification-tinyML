@@ -57,7 +57,14 @@ using namespace ei;
     #if (EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER == EI_CLASSIFIER_LAST_LAYER_TAO_YOLOV4)
     #define EI_HAS_TAO_YOLOV4 1
     #endif
+    #if (EI_CLASSIFIER_OBJECT_DETECTION_LAST_LAYER == EI_CLASSIFIER_LAST_LAYER_YOLOV2)
+    #define EI_HAS_YOLOV2 1
+    #endif
 #endif
+
+__attribute__((unused)) inline float sigmoid(float a) {
+    return 1.0f / (1.0f + exp(-a));
+}
 
 #ifdef EI_HAS_FOMO
 typedef struct cube {
@@ -367,7 +374,13 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32(const ei_
                                                                        ei_impulse_result_t *result,
                                                                        float *data,
                                                                        bool debug) {
-    for (uint32_t ix = 0; ix < impulse->label_count; ix++) {
+#ifdef EI_DSP_RESULT_OVERRIDE
+    uint32_t stop_count = EI_DSP_RESULT_OVERRIDE;
+#else
+    uint32_t stop_count = impulse->label_count;
+#endif
+    for (uint32_t ix = 0; ix < stop_count; ix++) {
+
         float value = data[ix];
 
         if (debug) {
@@ -375,7 +388,10 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32(const ei_
             ei_printf_float(value);
             ei_printf("\n");
         }
+// For testing purposes, we will have more values than labels
+#ifndef EI_DSP_RESULT_OVERRIDE
         result->classification[ix].label = impulse->categories[ix];
+#endif
         result->classification[ix].value = value;
     }
 
@@ -388,17 +404,13 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32(const ei_
 __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_visual_ad_struct_f32(const ei_impulse_t *impulse,
                                                                        ei_impulse_result_t *result,
                                                                        float *data,
-                                                                       float threshold,
+                                                                       ei_learning_block_config_tflite_graph_t* block_config,
                                                                        bool debug) {
 #if EI_CLASSIFIER_HAS_VISUAL_ANOMALY
     float max_val = 0;
     float sum_val = 0;
-    // the feature extractor output will be 1/8 of input
-    // due to the cut-off layer chosen in MobileNetV2
-    uint32_t grid_size_x = (impulse->input_width / 8) / 2 - 1;
-    uint32_t grid_size_y = (impulse->input_height / 8) / 2 - 1;
 
-    for (uint32_t ix = 0; ix < grid_size_x * grid_size_y; ix++) {
+    for (uint32_t ix = 0; ix < impulse->visual_ad_grid_size_x * impulse->visual_ad_grid_size_y; ix++) {
         float value = data[ix];
         sum_val += value;
         if (value > max_val) {
@@ -406,7 +418,7 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_visual_ad_struct_f32
         }
     }
 
-    result->visual_ad_result.mean_value = sum_val / (grid_size_x * grid_size_y);
+    result->visual_ad_result.mean_value = sum_val / (impulse->visual_ad_grid_size_x * impulse->visual_ad_grid_size_y);
     result->visual_ad_result.max_value = max_val;
 
     static ei_vector<ei_impulse_result_bounding_box_t> results;
@@ -414,16 +426,16 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_visual_ad_struct_f32
     int added_boxes_count = 0;
     results.clear();
 
-    for (uint32_t x = 0; x <= grid_size_x - 1; x++) {
-        for (uint32_t y = 0; y <= grid_size_y - 1; y++) {
-            if (data[x * grid_size_x + y] >= threshold) {
+    for (uint16_t x = 0; x <= impulse->visual_ad_grid_size_x - 1; x++) {
+        for (uint16_t y = 0; y <= impulse->visual_ad_grid_size_y - 1; y++) {
+            if (data[x * impulse->visual_ad_grid_size_x + y] >= block_config->threshold) {
                 ei_impulse_result_bounding_box_t tmp = {
                     .label = "anomaly",
-                    .x = static_cast<uint32_t>(y * (static_cast<float>(impulse->input_height) / grid_size_y)),
-                    .y = static_cast<uint32_t>(x * (static_cast<float>(impulse->input_width) / grid_size_x)),
-                    .width = (impulse->input_width / grid_size_x),
-                    .height = (impulse->input_height / grid_size_y),
-                    .value = data[x * grid_size_x + y]
+                    .x = static_cast<uint32_t>(y * (static_cast<float>(impulse->input_height) / impulse->visual_ad_grid_size_y)),
+                    .y = static_cast<uint32_t>(x * (static_cast<float>(impulse->input_width) / impulse->visual_ad_grid_size_x)),
+                    .width = (impulse->input_width / impulse->visual_ad_grid_size_x),
+                    .height = (impulse->input_height / impulse->visual_ad_grid_size_y),
+                    .value = data[x * impulse->visual_ad_grid_size_x + y]
                 };
 
                 results.push_back(tmp);
@@ -601,7 +613,7 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_quantized_yol
 
         if (score >= block_config->threshold && score <= 1.0f) {
             ei_impulse_result_bounding_box_t r;
-            r.label = ei_classifier_inferencing_categories[label];
+            r.label = impulse->categories[label];
 
             if (version != 5) {
                 x *= static_cast<float>(impulse->input_width);
@@ -872,7 +884,7 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32_yolox_det
 
         if (confidence >= block_config->threshold && confidence <= 1.0f) {
             ei_impulse_result_bounding_box_t r;
-            r.label = ei_classifier_inferencing_categories[class_idx];
+            r.label = impulse->categories[class_idx];
             r.value = confidence;
 
             // now find the box...
@@ -947,7 +959,7 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32_yolov7(co
 
         if (score >= block_config->threshold && score <= 1.0f) {
             ei_impulse_result_bounding_box_t r;
-            r.label = ei_classifier_inferencing_categories[label];
+            r.label = impulse->categories[label];
 
             r.x = static_cast<uint32_t>(xmin);
             r.y = static_cast<uint32_t>(ymin);
@@ -1127,7 +1139,7 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_tao_decode_de
         EI_IMPULSE_ERROR nms_res = ei_run_nms(impulse, &class_results,
                                               boxes.data(), scores.data(), classes.data(),
                                               nr_boxes,
-                                              false /*clip_boxes*/,
+                                              true /*clip_boxes*/,
                                               debug);
 
         if (nms_res != EI_IMPULSE_OK) {
@@ -1180,12 +1192,6 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32_tao_decod
     return EI_IMPULSE_LAST_LAYER_NOT_AVAILABLE;
 #endif // #ifdef EI_HAS_TAO_DETECT_DETECTIONS
 }
-
-#ifdef EI_HAS_TAO_YOLO
-__attribute__((unused)) inline float sigmoid(float a) {
-    return 1.0f / (1.0f + exp(-a));
-}
-#endif // #ifdef EI_HAS_TAO_YOLO
 
 #ifdef EI_HAS_TAO_YOLOV3
 /**
@@ -1457,6 +1463,261 @@ __attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_quantized_tao
 #endif // #ifdef EI_HAS_TAO_YOLOV4
 }
 
+#ifdef EI_HAS_YOLOV2
+// based on akida_models-1.2.0/detection/processing.py
+// input is "2D" array with shape [grid_h * grid_w * nb_box, nb_classes]
+__attribute__((unused)) static void softmax(std::vector<float>& input, const size_t nb_classes)
+{
+    const float max = *std::max_element(input.begin(), input.end());
+    const float min = *std::min_element(input.begin(), input.end());
+    const float t = -100.0f;
+
+    // x = x - np.max(x)
+    std::transform(input.begin(), input.end(), input.begin(),
+                   [max](float x) { return x - max; });
+
+    // if np.min(x) < t: x = x / np.min(x) * t
+    std::transform(input.begin(), input.end(), input.begin(),
+                   [min, t](float x) { return x < t ? (x / min * t): x; });
+
+    // e_x = np.exp(x)
+    // do it in place as we don't need raw the input anymore
+    std::transform(input.begin(), input.end(), input.begin(),
+                   [](float x) { return std::exp(x); });
+
+    // e_x / e_x.sum(axis, keepdims=True)
+    // calculated for each 'row', across nb_classes
+    for(auto it = input.begin(); it != input.end(); it += nb_classes) {
+        float sum = 0.0f;
+        // e_x.sum(axis, keepdims=True)
+        for(auto it2 = it; it2 != it + nb_classes; it2++) {
+            sum += *it2;
+        }
+        // e_x / e_x.sum(axis, keepdims=True)
+        std::transform(it, it + nb_classes, it,
+                       [sum](float ex) { return ex / sum; });
+    }
+}
+
+class BoundingBox {
+public:
+    float x1, y1, x2, y2, confidence;
+    std::vector<float> classes;
+
+    BoundingBox(float x1, float y1, float x2, float y2, float confidence, const std::vector<float>& classes)
+        : x1(x1), y1(y1), x2(x2), y2(y2), confidence(confidence), classes(classes) {}
+
+    float get_score() const {
+        return confidence;
+    }
+
+    int get_label() const {
+        auto maxElementIndex = std::max_element(classes.begin(), classes.end()) - classes.begin();
+        return maxElementIndex;
+    }
+
+    float _interval_overlap(float x1, float x2, float x3, float x4) const {
+        if(x3 < x1) {
+            if(x4 < x1) {
+                return 0;
+            }
+            return std::min(x2, x4) - x1;
+        }
+        if(x2 < x3) {
+            return 0;
+        }
+        return std::min(x2, x4) - x3;
+    }
+
+
+    float iou(const BoundingBox& other) const {
+        // Implementation of the Intersection over Union calculation
+        float intersect_w = this->_interval_overlap(this->x1, this->x2, other.x1, other.x2);
+        float intersect_h = this->_interval_overlap(this->y1, this->y2, other.y1, other.y2);
+
+        float intersect = intersect_w * intersect_h;
+
+        float w1 = this->x2 - this->x1;
+        float h1 = this->y2 - this->y1;
+        float w2 = other.x2 - other.x1;
+        float h2 = other.y2 - other.y1;
+
+        float un = w1 * h1 + w2 * h2 - intersect;
+
+        return float(intersect) / un;
+    }
+};
+#endif // EI_HAS_YOLOV2
+/**
+  * Fill the result structure from an unquantized output tensor
+  */
+__attribute__((unused)) static EI_IMPULSE_ERROR fill_result_struct_f32_yolov2(const ei_impulse_t *impulse,
+                                                                              const ei_learning_block_config_tflite_graph_t *block_config,
+                                                                              ei_impulse_result_t *result,
+                                                                              float *data,
+                                                                              size_t output_features_count,
+                                                                              bool debug = false) {
+#ifdef EI_HAS_YOLOV2
+    static std::vector<ei_impulse_result_bounding_box_t> results;
+    results.clear();
+
+    // Example output shape: (7, 7, 5, 7)
+    // TODO: calculate grid_h, grid_w, nb_box from output_features_count or get as a param
+    // grid_h, grid_w, nb_box = output.shape[:3]
+    const size_t grid_h = 7;
+    const size_t grid_w = 7;
+    const size_t nb_box = 5;
+    const std::vector<std::pair<float, float>> anchors = {{0.56594, 1.05012}, {1.0897, 2.03908}, {2.37823, 3.00376}, {2.4593, 4.913}, {5.15981, 5.56699}};
+
+    const size_t nb_classes = impulse->label_count;
+    const float obj_threshold = 0.5;
+    const float nms_threshold = 0.5;
+    std::vector<float> output;
+    const int stride = 4 + 1 + nb_classes;
+
+    output.assign(data, data + output_features_count);
+
+    // boxes = []
+    std::vector<BoundingBox> boxes;
+
+    // equivalent to: classes_confidences = output[..., 5:]
+    std::vector<float> classes_confidences;
+    const size_t dim = 5;
+    for(auto it = output.begin() + dim; it <= output.end(); it += (dim + nb_classes)) {
+        classes_confidences.insert(classes_confidences.end(), it, it + nb_classes);
+    }
+    // calculate softmax for later use, we need to calculate it across the whole input data so operate on a sliced output
+    softmax(classes_confidences, nb_classes);
+
+    for (size_t row = 0; row < grid_h; ++row) {
+        for (size_t col = 0; col < grid_w; ++col) {
+            for (size_t b = 0; b < nb_box; ++b) {
+                size_t idx = row * grid_w * nb_box * stride + col * nb_box * stride + b * stride;
+                size_t classes_idx = row * grid_w * nb_box * nb_classes + col * nb_box * nb_classes + b * nb_classes;
+
+                // Apply sigmoid to the 4th element
+                // output[..., 4] = _sigmoid(output[..., 4])
+                float sigmoid_val = sigmoid(output[idx + 4]);
+                output[idx + 4] = sigmoid_val;
+
+                // classes = output[row, col, b, 5:]
+                std::vector<float> classes(classes_confidences.begin() + classes_idx, classes_confidences.begin() + classes_idx + nb_classes);
+
+                // output[..., 5:] = output[..., 4][..., np.newaxis] * _softmax(output[..., 5:])
+                // output[..., 5:] *= output[..., 5:] > obj_threshold
+                std::transform(classes.begin(), classes.end(), classes.begin(),
+                               [sigmoid_val, obj_threshold](float c) { c *= sigmoid_val; return c > obj_threshold ? c : 0.0f; });
+
+                // if np.sum(classes) > 0:
+                float sum = 0.0f;
+                for(auto it = classes.begin(); it != classes.end(); it++) {
+                    sum += *it;
+                }
+                if(sum > 0.0f) {
+                    // x, y, w, h = output[row, col, b, :4]
+                    float x = output[idx + 0];
+                    float y = output[idx + 1];
+                    float w = output[idx + 2];
+                    float h = output[idx + 3];
+
+                    // x = (col + _sigmoid(x)) / grid_w  # center position, unit: image width
+                    x = (col + sigmoid(x)) / grid_w;
+                    // y = (row + _sigmoid(y)) / grid_h  # center position, unit: image height
+                    y = (row + sigmoid(y)) / grid_h;
+                    // w = anchors[b][0] * np.exp(w) / grid_w  # unit: image width
+                    w = anchors[b].first * std::exp(w) / grid_w;
+                    // h = anchors[b][1] * np.exp(h) / grid_h  # unit: image height
+                    h = anchors[b].second * std::exp(h) / grid_h;
+
+                    // confidence = output[row, col, b, 4]
+                    float confidence = output[idx + 4];
+
+                    // x1 = max(x - w / 2, 0)
+                    float x1 = std::max(x - w / 2, 0.0f);
+                    // y1 = max(y - h / 2, 0)
+                    float y1 = std::max(y - h / 2, 0.0f);
+                    // x2 = min(x + w / 2, grid_w)
+                    float x2 = std::min(x + w / 2, static_cast<float>(grid_w));
+                    // y2 = min(y + h / 2, grid_h)
+                    float y2 = std::min(y + h / 2, static_cast<float>(grid_h));
+
+                    boxes.emplace_back(x1, y1, x2, y2, confidence, classes);
+                }
+            }
+        }
+    }
+
+    // Non-maximal suppression (on boxes)
+    for (size_t c = 0; c < nb_classes; ++c) {
+        std::vector<std::pair<float, int>> sorted_indices;
+        for (size_t i = 0; i < boxes.size(); ++i) {
+            sorted_indices.emplace_back(boxes[i].classes[c], i);
+        }
+
+        std::sort(sorted_indices.begin(), sorted_indices.end(),
+                  [](const std::pair<float, int>& a, const std::pair<float, int>& b) {
+                      return a.first > b.first;
+                  });
+
+        for (size_t i = 0; i < sorted_indices.size(); ++i) {
+            int index_i = sorted_indices[i].second;
+            if (boxes[index_i].classes[c] == 0)
+                continue;
+
+            for (size_t j = i + 1; j < sorted_indices.size(); ++j) {
+                int index_j = sorted_indices[j].second;
+
+                if ((boxes[index_i].iou(boxes[index_j]) >= nms_threshold) &&
+                    (boxes[index_i].get_label() == (int)c) &&
+                    (boxes[index_j].get_label() == (int)c)) {
+                    boxes[index_j].confidence = 0;
+                }
+            }
+        }
+    }
+
+    // remove the boxes which are less likely than a obj_threshold
+    boxes.erase(std::remove_if(boxes.begin(), boxes.end(),
+                               [obj_threshold](const BoundingBox& box) {
+                                   return box.get_score() <= obj_threshold;
+                               }), boxes.end());
+
+    // sort boxes by box.get_score()
+    std::sort(boxes.begin(), boxes.end(),
+                [](const BoundingBox& a, const BoundingBox& b) {
+                return a.get_score() > b.get_score();
+                });
+
+    // convert relative coordinates to absolute coordinates
+    for(auto & box: boxes) {
+        ei_impulse_result_bounding_box_t res;
+        res.label = impulse->categories[box.get_label()];
+        res.x = ceil(box.x1 * impulse->input_width);
+        res.y = ceil(box.y1 * impulse->input_height);
+        res.width = ceil((box.x2 - box.x1) * impulse->input_width);
+        res.height = ceil((box.y2 - box.y1) * impulse->input_height);
+        res.value = box.get_score();
+        results.push_back(res);
+    }
+
+    // if we didn't detect min required objects, fill the rest with fixed value
+    size_t added_boxes_count = results.size();
+    size_t min_object_detection_count = impulse->object_detection_count;
+    if (added_boxes_count < min_object_detection_count) {
+        results.resize(min_object_detection_count);
+        for (size_t ix = added_boxes_count; ix < min_object_detection_count; ix++) {
+            results[ix].value = 0.0f;
+        }
+    }
+
+    result->bounding_boxes = results.data();
+    result->bounding_boxes_count = results.size();
+
+    return EI_IMPULSE_OK;
+#else
+    return EI_IMPULSE_LAST_LAYER_NOT_AVAILABLE;
+#endif // #ifdef EI_HAS_YOLOV7
+}
 
 #if EI_CLASSIFIER_SINGLE_FEATURE_INPUT == 0
 bool find_mtx_by_idx(ei_feature_t* mtx, ei::matrix_t** matrix, uint32_t mtx_id, size_t mtx_size) {

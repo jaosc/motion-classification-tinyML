@@ -43,7 +43,6 @@
 static bool debug_nn = false; // Set this to true to see e.g. features generated from the raw signal
 
 BLEService moviment_service("180C");
-
 BLEStringCharacteristic ble_acc("2A56", BLERead | BLENotify, 13);
 
 /**
@@ -64,36 +63,24 @@ void setup()
         ei_printf("IMU initialized\r\n");
     }
 
-      Serial.begin(9600);
-
-    if (!IMU.begin()) {
-        Serial.println("Failed to initialize IMU!");
-        while (1);
-    }
-
     Serial.print("Acceleration sample rate = ");
     Serial.print(IMU.accelerationSampleRate());
     Serial.println(" Hz");
     Serial.println();
 
-    while (!Serial);
-    if(!BLE.begin()){
-        Serial.println("BLE failed to init");
-        while(1);
-    }
-
-    if (EI_CLASSIFIER_RAW_SAMPLES_PER_FRAME != 4) {
+    if (EI_CLASSIFIER_RAW_SAMPLES_PER_FRAME != 3) {
         ei_printf("ERR: EI_CLASSIFIER_RAW_SAMPLES_PER_FRAME should be equal to 4 (the 4 sensor axes)\n");
         return;
     }
 
-    BLE.setLocalName("ArduinoML");
+    if(!BLE.begin()){
+        Serial.println("BLE failed to init");
+        while(1);
+    }
+    BLE.setLocalName("MOVEIA");
     moviment_service.addCharacteristic(ble_acc);
-    
     BLE.setAdvertisedService(moviment_service);
-
     BLE.addService(moviment_service);
-
     BLE.advertise();
     Serial.println("BLE active, waiting for connections...");
 
@@ -128,18 +115,18 @@ void loop()
     // Allocate a buffer here for the values we'll read from the IMU
     float buffer[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE] = { 0 };
 
-    for (size_t ix = 0; ix < EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE; ix += 4) {
+    for (size_t ix = 0; ix < EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE; ix += 3) {
         // Determine the next tick (and then sleep later)
         uint64_t next_tick = micros() + (EI_CLASSIFIER_INTERVAL_MS * 1000);
 
         IMU.readAcceleration(buffer[ix], buffer[ix + 1], buffer[ix + 2]);
         
         // variables necessary to read from gyroscope, but my model just need Gz.
-        float x, y;
+        // float x, y;
         // Put Gz in my buffer
-        IMU.readGyroscope(x, y, buffer[ix + 3]);
+        // IMU.readGyroscope(buffer[ix + 3], buffer[ix + 4], buffer[ix + 5]);
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 3; i++) {
             if (fabs(buffer[ix + i]) > MAX_ACCEPTED_RANGE) {
                 buffer[ix + i] = ei_get_sign(buffer[ix + i]) * MAX_ACCEPTED_RANGE;
             }
@@ -148,7 +135,7 @@ void loop()
         buffer[ix + 0] *= CONVERT_G_TO_MS2;
         buffer[ix + 1] *= CONVERT_G_TO_MS2;
         buffer[ix + 2] *= CONVERT_G_TO_MS2;
-        buffer[ix + 3] *= CONVERT_G_TO_MS2;
+        // buffer[ix + 3] *= CONVERT_G_TO_MS2;
 
         delayMicroseconds(next_tick - micros());
     }
@@ -182,39 +169,26 @@ void loop()
     ei_printf("    anomaly score: %.3f\n", result.anomaly);
 #endif
 
-    String inferenced_label = "idle";
-    float inferenced_score = 0;
+    String inferred_label = "idle";
+    float inferred_score = 0;
     for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++)
     {
-        if(result.classification[i].value > inferenced_score){
-            inferenced_score = result.classification[i].value;
-            inferenced_label = result.classification[i].label;
+        if(result.classification[i].value > inferred_score){
+            inferred_score = result.classification[i].value;
+            inferred_label = result.classification[i].label;
         }
     }
-
-    Serial.print("Predicted Label: ");
-    Serial.println(inferenced_label);
-    Serial.print("Predicted probability: ");
-    Serial.println(inferenced_score);
-
+    printf("Predicted Label: %d | Predicted probability: %.2f\n", inferred_label, inferred_score);
+    
     if(central){
-
-        Serial.print("Connected to: ");
-        Serial.println(central.address());
-
         if (central.connected())
         {
-            ble_acc.writeValue(inferenced_label);
+            ble_acc.writeValue(inferred_label);
         }
 
     }else{
-
         Serial.print("Disconnected from ");
         Serial.println(central.address());
 
     }
 }
-
-// #if !defined(EI_CLASSIFIER_SENSOR) || EI_CLASSIFIER_SENSOR != EI_CLASSIFIER_SENSOR_ACCELEROMETER
-// #error "Invalid model for current sensor"
-// #endif

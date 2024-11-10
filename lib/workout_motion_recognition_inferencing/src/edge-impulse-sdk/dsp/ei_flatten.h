@@ -44,7 +44,13 @@ public:
         return ei::EIDSP_OK;
     }
 
-    int extract(ei::signal_t *signal, ei::matrix_t *output_matrix, void *config_ptr, const float frequency) override {
+    int extract(
+        ei::signal_t *signal,
+        ei::matrix_t *output_matrix,
+        void *config_ptr,
+        const float frequency,
+        ei_impulse_result_t *result) override
+    {
         using namespace ei;
 
         ei_dsp_config_flatten_t config = *((ei_dsp_config_flatten_t*)config_ptr);
@@ -154,7 +160,7 @@ public:
         return EIDSP_OK;
     }
 
-    static DspHandle* create(void* config);
+    static DspHandle* create(void* config, float _sampling_frequency);
 
     void* operator new(size_t size) {
         // Custom memory allocation logic here
@@ -190,7 +196,7 @@ private:
     }
 };
 
-DspHandle* flatten_class::create(void* config_in) { // NOLINT def in header is OK at EI
+DspHandle* flatten_class::create(void* config_in, float _sampling_frequency) { // NOLINT def in header is OK at EI
     auto config = reinterpret_cast<ei_dsp_config_flatten_t*>(config_in);
     return new flatten_class(config->moving_avg_num_windows, config->axes);
 };

@@ -209,27 +209,50 @@ void loop()
         ei_printf("Predictions (DSP: %d ms., Classification: %d ms., Anomaly: %d ms.): \n",
                   result.timing.dsp, result.timing.classification, result.timing.anomaly);
 #if EI_CLASSIFIER_OBJECT_DETECTION == 1
-        bool bb_found = result.bounding_boxes[0].value > 0;
-        for (size_t ix = 0; ix < result.bounding_boxes_count; ix++) {
-            auto bb = result.bounding_boxes[ix];
+        ei_printf("Object detection bounding boxes:\r\n");
+        for (uint32_t i = 0; i < result.bounding_boxes_count; i++) {
+            ei_impulse_result_bounding_box_t bb = result.bounding_boxes[i];
             if (bb.value == 0) {
                 continue;
             }
-
-            ei_printf("    %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\n", bb.label, bb.value, bb.x, bb.y, bb.width, bb.height);
+            ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
+                    bb.label,
+                    bb.value,
+                    bb.x,
+                    bb.y,
+                    bb.width,
+                    bb.height);
         }
 
-        if (!bb_found) {
-            ei_printf("    No objects found\n");
-        }
+    // Print the prediction results (classification)
 #else
-        for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
-            ei_printf("    %s: %.5f\n", result.classification[ix].label,
-                                        result.classification[ix].value);
+        ei_printf("Predictions:\r\n");
+        for (uint16_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+            ei_printf("  %s: ", ei_classifier_inferencing_categories[i]);
+            ei_printf("%.5f\r\n", result.classification[i].value);
         }
-#if EI_CLASSIFIER_HAS_ANOMALY == 1
-        ei_printf("    anomaly score: %.3f\n", result.anomaly);
 #endif
+
+    // Print anomaly result (if it exists)
+#if EI_CLASSIFIER_HAS_ANOMALY
+        ei_printf("Anomaly prediction: %.3f\r\n", result.anomaly);
+#endif
+
+#if EI_CLASSIFIER_HAS_VISUAL_ANOMALY
+        ei_printf("Visual anomalies:\r\n");
+        for (uint32_t i = 0; i < result.visual_ad_count; i++) {
+            ei_impulse_result_bounding_box_t bb = result.visual_ad_grid_cells[i];
+            if (bb.value == 0) {
+                continue;
+            }
+            ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
+                    bb.label,
+                    bb.value,
+                    bb.x,
+                    bb.y,
+                    bb.width,
+                    bb.height);
+        }
 #endif
 
         while (ei_get_serial_available() > 0) {
@@ -282,7 +305,7 @@ int calculate_resize_dimensions(uint32_t out_width, uint32_t out_height, uint32_
  */
 bool ei_camera_init(void) {
     if (is_initialised) return true;
-    
+
     if (!Cam.begin(QQVGA, RGB565, 1)) { // VGA downsampled to QQVGA (OV7675)
         ei_printf("ERR: Failed to initialize camera\r\n");
         return false;
@@ -313,7 +336,7 @@ void ei_camera_deinit(void) {
  * @retval     false if not initialised, image captured, rescaled or cropped failed
  *
  */
-bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf) 
+bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf)
 {
     if (!is_initialised) {
         ei_printf("ERR: Camera is not initialized\r\n");
@@ -376,7 +399,7 @@ bool ei_camera_capture(uint32_t img_width, uint32_t img_height, uint8_t *out_buf
  * @param[out]  out_buf      pointer to store output image
  */
 int ei_camera_cutout_get_data(size_t offset, size_t length, float *out_ptr) {
-    size_t pixel_ix = offset * 2; 
+    size_t pixel_ix = offset * 2;
     size_t bytes_left = length;
     size_t out_ptr_ix = 0;
 
@@ -667,7 +690,7 @@ int OV7675::deallocate_scratch_buffs()
     //ei_printf("deallocating buffers...\r\n");
     ei_free(buf_mem);
     buf_mem = NULL;
-    
+
     //ei_printf("deallocating buffers OK\r\n");
     return 0;
 }
@@ -702,7 +725,7 @@ void OV7675::readFrame(void* buffer)
                     resize_col_sz, resize_height,
                     &(out[out_row]),
                     16);
-        
+
         out_row += resize_col_sz * resize_height * bytes_per_pixel; /* resize_col_sz * 2 * 2 */
     }
 
